@@ -6,9 +6,9 @@ A fully cloud-native, automated YouTube publishing pipeline designed for **Erica
 - **YouTube Channel:** Erica Hawkins
 - **YouTube Channel ID:** `UCLOTIMzRzS7Q7sQlIztiLMw`
 - **Owner Account:** `williamdsouza5445@gmail.com`
-- **GitHub Account:** `williamdsouza5445-lang`
-- **GitHub Pages Site:** [https://williamdsouza5445-lang.github.io/](https://williamdsouza5445-lang.github.io/)
-- **Privacy Policy:** [https://williamdsouza5445-lang.github.io/privacy.html](https://williamdsouza5445-lang.github.io/privacy.html)
+- **GitHub Account:** `saqibaliofficial1995-crypto`
+- **GitHub Pages Site:** [https://saqibaliofficial1995-crypto.github.io/](https://saqibaliofficial1995-crypto.github.io/)
+- **Privacy Policy:** [https://saqibaliofficial1995-crypto.github.io/privacy.html](https://saqibaliofficial1995-crypto.github.io/privacy.html)
 - **First Live Video Published:** [https://youtu.be/Msyhi2iQ5mI](https://youtu.be/Msyhi2iQ5mI) (*Cat Party Surprise: Watch What Happens!*)
 
 ## Google Drive Integration
