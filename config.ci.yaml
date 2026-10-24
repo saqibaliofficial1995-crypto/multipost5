@@ -34,5 +34,7 @@ schedule:
 
 metadata:
   use_llm: true
+  ai_provider: "groq"
+  model: "qwen/qwen3.8-27b"
   channel_topic: ""
   append_hashtags_to_description: true

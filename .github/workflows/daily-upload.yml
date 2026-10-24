@@ -53,6 +53,7 @@ jobs:
           YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
           DRIVE_FOLDER_ID: ${{ secrets.DRIVE_FOLDER_ID }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
           MAX_UPLOADS: ${{ github.event.inputs.max_uploads || '1' }}
         run: python -u src/ci_run.py --config config.ci.yaml

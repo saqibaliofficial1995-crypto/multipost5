@@ -34,7 +34,6 @@ def save_state(state, state_file):
 
 def get_uploaded_ids(state):
     uploaded = set()
-    # Check items
     items = state.get("items", {})
     if isinstance(items, dict):
         for fid, entry in items.items():
@@ -44,7 +43,6 @@ def get_uploaded_ids(state):
             elif isinstance(entry, str) and entry.strip():
                 uploaded.add(fid)
 
-    # Check history
     for entry in state.get("history", []):
         if isinstance(entry, dict):
             fid = entry.get("drive_file_id") or entry.get("id")
@@ -65,7 +63,28 @@ def execute_pipeline(config_path="config.ci.yaml"):
     uploaded_ids = get_uploaded_ids(state)
 
     access_token = get_access_token()
-    gemini_key = get_gemini_api_key()
+
+    # Determine AI provider
+    ai_provider = config.get("metadata", {}).get("ai_provider")
+    model_name = config.get("metadata", {}).get("model")
+    if os.path.exists("config.json"):
+        try:
+            with open("config.json", "r", encoding="utf-8") as f:
+                c_json = json.load(f)
+                if not ai_provider:
+                    ai_provider = c_json.get("ai_provider")
+                if not model_name:
+                    model_name = c_json.get("model")
+        except Exception:
+            pass
+
+    if ai_provider == "groq" or (os.environ.get("GROQ_API_KEY") and not os.environ.get("GEMINI_API_KEY")):
+        from src.auth_env import get_groq_api_key
+        api_key = get_groq_api_key()
+        provider = "groq"
+    else:
+        api_key = get_gemini_api_key()
+        provider = "gemini"
 
     session = requests.Session()
     session.headers.update({"Authorization": f"Bearer {access_token}"})
@@ -73,7 +92,6 @@ def execute_pipeline(config_path="config.ci.yaml"):
     inbox_id = config.get("drive", {}).get("inbox_folder_id")
     uploaded_folder_id = config.get("drive", {}).get("uploaded_folder_id")
 
-    # List pending videos
     pending_videos = list_pending_videos(session, inbox_id, uploaded_ids)
     if not pending_videos:
         print("[finish] Nothing to upload. Inbox is clear.", flush=True)
@@ -94,28 +112,20 @@ def execute_pipeline(config_path="config.ci.yaml"):
         norm_path = os.path.join(work_dir, f"norm_{file_id}.mp4")
 
         try:
-            # 1. Download
             download_video(session, file_id, raw_path)
-
-            # 2. Normalize via FFmpeg
             normalize_video(raw_path, norm_path, config.get("encode", {}))
             duration = get_video_duration(norm_path)
 
-            # 3. Gemini Multimodal Analysis
-            metadata = generate_video_metadata(norm_path, gemini_key, duration_seconds=duration)
+            metadata = generate_video_metadata(norm_path, api_key, duration_seconds=duration, provider=provider, model=model_name)
 
             if is_dry_run:
                 print(f"[dry-run] Dry run active. Validated metadata path: '{metadata.get('path')}'. Skipping YouTube upload and Drive move for {file_name}.", flush=True)
                 processed_count += 1
                 continue
 
-            # 4. Upload to YouTube (with safety gate check)
             yt_id, yt_url = upload_to_youtube(norm_path, metadata, access_token, config)
-
-            # 5. Move and trash in Drive
             move_to_uploaded_and_trash(session, file_id, uploaded_folder_id, file_name)
 
-            # 6. Update state
             record = {
                 "drive_file_id": file_id,
                 "filename": file_name,
@@ -131,7 +141,6 @@ def execute_pipeline(config_path="config.ci.yaml"):
 
             processed_count += 1
         finally:
-            # Clean local work files
             for p in [raw_path, norm_path]:
                 if os.path.exists(p):
                     try:

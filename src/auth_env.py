@@ -53,3 +53,10 @@ def get_drive_folder_id():
     if not folder_id:
         raise ValueError("DRIVE_FOLDER_ID is not set.")
     return folder_id
+
+
+def get_groq_api_key():
+    key = os.environ.get("GROQ_API_KEY")
+    if not key:
+        raise ValueError("GROQ_API_KEY is not set.")
+    return key

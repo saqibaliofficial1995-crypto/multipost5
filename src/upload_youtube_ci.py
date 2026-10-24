@@ -6,8 +6,8 @@ import requests
 def upload_to_youtube(video_path, metadata, access_token, config):
     # Safety Gate Check
     meta_path = metadata.get("path")
-    if meta_path != "video_ai_gemini":
-        print(f"[block] Safety block: Publishing blocked because metadata path is '{meta_path}'. Only 'video_ai_gemini' is allowed to publish live.", flush=True)
+    if meta_path not in ["video_ai_gemini", "video_ai_groq"]:
+        print(f"[block] Safety block: Publishing blocked because metadata path is '{meta_path}'. Only 'video_ai_gemini' or 'video_ai_groq' is allowed to publish live.", flush=True)
         raise RuntimeError(f"Safety block triggered: metadata path '{meta_path}' not authorized.")
 
     title = metadata["title"]
