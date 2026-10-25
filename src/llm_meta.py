@@ -1,3 +1,14 @@
+import socket
+
+_orig = socket.getaddrinfo
+
+def _ipv4(host, port, family=0, type=0, proto=0, flags=0):
+    if family == 0 or family == socket.AF_UNSPEC:
+        family = socket.AF_INET
+    return _orig(host, port, family, type, proto, flags)
+
+socket.getaddrinfo = _ipv4
+
 import os
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -233,7 +244,48 @@ def extract_keyframes(video_path, num_frames=3, duration_seconds=60):
         except: pass
     return b64_frames
 
+def get_best_groq_vision_model(api_key, fallback_model="qwen/qwen3.8-27b"):
+    """
+    GROQ MODEL AUTO-SELECT: Query live models endpoint at runtime,
+    pick a live vision-capable model, and fall back to configured model if query fails.
+    """
+    url = "https://api.groq.com/openai/v1/models"
+    headers = {"Authorization": f"Bearer {api_key}"}
+    try:
+        resp = requests.get(url, headers=headers, timeout=10)
+        if resp.status_code == 200:
+            models_data = resp.json().get("data", [])
+            # Priority candidates for vision on Groq
+            active_models = [m["id"] for m in models_data if m.get("active", True)]
+            candidates = [
+                m for m in active_models
+                if "vision" in m.lower() or "qwen" in m.lower()
+            ]
+            preferred_order = [
+                "meta-llama/llama-3.2-11b-vision-preview",
+                "llama-3.2-11b-vision-preview",
+                "meta-llama/llama-3.2-90b-vision-preview",
+                "llama-3.2-90b-vision-preview",
+                "qwen/qwen3.8-27b",
+            ]
+            for pref in preferred_order:
+                if pref in candidates:
+                    print(f"[groq] Auto-selected live vision model: {pref}", flush=True)
+                    return pref
+            if candidates:
+                chosen = candidates[0]
+                print(f"[groq] Auto-selected live vision model: {chosen}", flush=True)
+                return chosen
+    except Exception as e:
+        print(f"[groq] Warning querying live models endpoint: {e}", flush=True)
+
+    print(f"[groq] Using configured fallback model: {fallback_model}", flush=True)
+    return fallback_model
+
 def generate_video_metadata_groq(video_path, api_key, duration_seconds=60, model="qwen/qwen3.8-27b"):
+    # Auto-select active vision model
+    selected_model = get_best_groq_vision_model(api_key, fallback_model=model)
+
     b64_frames = extract_keyframes(video_path, num_frames=3, duration_seconds=duration_seconds)
     if not b64_frames:
         raise RuntimeError("Failed to extract keyframes with ffmpeg.")
@@ -269,7 +321,7 @@ Required JSON structure:
         })
 
     payload = {
-        "model": model,
+        "model": selected_model,
         "messages": [
             {"role": "user", "content": content}
         ],
@@ -296,7 +348,7 @@ Required JSON structure:
         if elapsed > MAX_METADATA_TIME_SECONDS:
             raise RuntimeError(f"Groq metadata generation exceeded overall time cap of {MAX_METADATA_TIME_SECONDS}s.")
 
-        print(f"[model] Trying Groq vision model '{model}' (validation attempts: {validation_attempts_used}/{max_validation_attempts}, elapsed: {elapsed:.1f}s)...", flush=True)
+        print(f"[model] Trying Groq vision model '{selected_model}' (validation attempts: {validation_attempts_used}/{max_validation_attempts}, elapsed: {elapsed:.1f}s)...", flush=True)
 
         res = None
         for retry_i in range(3):
@@ -332,7 +384,7 @@ Required JSON structure:
 
             validate_metadata(meta)
             meta["path"] = "video_ai_groq"
-            meta["model_used"] = model
+            meta["model_used"] = selected_model
             final_meta = meta
             break
         except Exception as val_err:
