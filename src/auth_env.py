@@ -1,19 +1,60 @@
 import os
 import time
+import json
 import requests
 
-REQUIRED_ENV_VARS = [
+try:
+    import yaml
+except ImportError:
+    yaml = None
+
+BASE_REQUIRED_ENV_VARS = [
     "YT_CLIENT_ID",
     "YT_CLIENT_SECRET",
     "YT_REFRESH_TOKEN",
-    "DRIVE_FOLDER_ID",
-    "GEMINI_API_KEY"
+    "DRIVE_FOLDER_ID"
 ]
 
+REQUIRED_ENV_VARS = BASE_REQUIRED_ENV_VARS
+
+def get_ai_provider():
+    """Read ai_provider from config.ci.yaml or config.json, default to 'gemini'."""
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for filename in ["config.ci.yaml", "config.json"]:
+        path = os.path.join(base_dir, filename)
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8-sig") as f:
+                    if filename.endswith((".yaml", ".yml")):
+                        cfg = yaml.safe_load(f) if yaml else {}
+                    else:
+                        cfg = json.load(f)
+                if isinstance(cfg, dict):
+                    provider = cfg.get("metadata", {}).get("ai_provider") if isinstance(cfg.get("metadata"), dict) else None
+                    if not provider:
+                        provider = cfg.get("ai_provider")
+                    if provider:
+                        return str(provider).strip().lower()
+            except Exception:
+                pass
+    return "gemini"
+
 def validate_env():
-    missing = [v for v in REQUIRED_ENV_VARS if not os.environ.get(v)]
+    """Validate required environment variables, taking ai_provider into account."""
+    missing = [v for v in BASE_REQUIRED_ENV_VARS if not os.environ.get(v)]
     if missing:
         raise ValueError(f"Missing required environment variable(s): {', '.join(missing)}")
+
+    provider = get_ai_provider()
+    if provider == "groq":
+        if not os.environ.get("GROQ_API_KEY"):
+            raise ValueError(f"Missing required environment variable for provider '{provider}': GROQ_API_KEY")
+    elif provider == "gemini":
+        if not os.environ.get("GEMINI_API_KEY"):
+            raise ValueError(f"Missing required environment variable for provider '{provider}': GEMINI_API_KEY")
+    else:
+        if not os.environ.get("GROQ_API_KEY") and not os.environ.get("GEMINI_API_KEY"):
+            raise ValueError(f"Missing required environment variable for provider '{provider}': GROQ_API_KEY or GEMINI_API_KEY")
 
 def get_access_token():
     validate_env()
@@ -53,7 +94,6 @@ def get_drive_folder_id():
     if not folder_id:
         raise ValueError("DRIVE_FOLDER_ID is not set.")
     return folder_id
-
 
 def get_groq_api_key():
     key = os.environ.get("GROQ_API_KEY")
