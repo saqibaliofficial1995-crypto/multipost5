@@ -186,8 +186,10 @@ def validate_metadata(meta):
         raise ValueError("Title contains numerical magnitude/unit pattern.")
 
     tags = meta.get("tags", [])
+    if isinstance(tags, str):
+        tags = [t.strip() for t in tags.split(",") if t.strip()]
     if not isinstance(tags, list) or len(tags) < 10:
-        raise ValueError(f"Tags count is {len(tags)}, must be at least 10.")
+        raise ValueError(f"Tags count is {len(tags) if isinstance(tags, list) else 0}, must be at least 10.")
     tags = tags[:15]
     meta["tags"] = tags
     tags_joined = ",".join(tags)
@@ -195,8 +197,10 @@ def validate_metadata(meta):
         raise ValueError(f"Tags string length {len(tags_joined)} exceeds 460 characters.")
 
     hashtags = meta.get("hashtags", [])
+    if isinstance(hashtags, str):
+        hashtags = [h.strip() for h in re.split(r"[\s,]+", hashtags) if h.strip()]
     if not isinstance(hashtags, list) or len(hashtags) != 3:
-        raise ValueError(f"Hashtags count is {len(hashtags)}, must be exactly 3.")
+        raise ValueError(f"Hashtags count is {len(hashtags) if isinstance(hashtags, list) else 0}, must be exactly 3.")
     cleaned_hashtags = []
     for h in hashtags:
         h_clean = h.strip()
