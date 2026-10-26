@@ -282,6 +282,44 @@ def get_best_groq_vision_model(api_key, fallback_model="qwen/qwen3.8-27b"):
     print(f"[groq] Using configured fallback model: {fallback_model}", flush=True)
     return fallback_model
 
+
+def get_best_groq_text_model(api_key, fallback_model="llama-3.1-8b-instant"):
+    """
+    GROQ TEXT MODEL AUTO-SELECT: Query live models endpoint at runtime,
+    pick a live smaller text model, and fall back to configured model if query fails.
+    """
+    url = "https://api.groq.com/openai/v1/models"
+    headers = {"Authorization": f"Bearer {api_key}"}
+    try:
+        resp = requests.get(url, headers=headers, timeout=10)
+        if resp.status_code == 200:
+            models_data = resp.json().get("data", [])
+            active_models = [m["id"] for m in models_data if m.get("active", True)]
+            preferred_text_order = [
+                "llama-3.1-8b-instant",
+                "llama3-8b-8192",
+                "gemma2-9b-it",
+                "llama-3.3-70b-versatile",
+                "mixtral-8x7b-32768",
+            ]
+            for pref in preferred_text_order:
+                if pref in active_models:
+                    print(f"[groq] Auto-selected live text model: {pref}", flush=True)
+                    return pref
+            text_candidates = [
+                m for m in active_models
+                if "vision" not in m.lower() and "whisper" not in m.lower()
+            ]
+            if text_candidates:
+                chosen = text_candidates[0]
+                print(f"[groq] Auto-selected live text model: {chosen}", flush=True)
+                return chosen
+    except Exception as e:
+        print(f"[groq] Warning querying live text models endpoint: {e}", flush=True)
+
+    print(f"[groq] Using configured fallback text model: {fallback_model}", flush=True)
+    return fallback_model
+
 def generate_video_metadata_groq(video_path, api_key, duration_seconds=60, model="qwen/qwen3.8-27b"):
     # Auto-select active vision model
     selected_model = get_best_groq_vision_model(api_key, fallback_model=model)
@@ -351,18 +389,96 @@ Required JSON structure:
         print(f"[model] Trying Groq vision model '{selected_model}' (validation attempts: {validation_attempts_used}/{max_validation_attempts}, elapsed: {elapsed:.1f}s)...", flush=True)
 
         res = None
+        rate_limited = False
+        current_model_used = selected_model
+
         for retry_i in range(3):
             try:
                 res = requests.post(url, headers=headers, json=payload, timeout=60)
                 if res.status_code == 200:
                     break
-                elif res.status_code in (429, 500, 503):
+                elif res.status_code == 429:
+                    rate_limited = True
+                    wait_time = None
+                    retry_header = res.headers.get("Retry-After") or res.headers.get("retry-after")
+                    if retry_header:
+                        try:
+                            wait_time = float(retry_header)
+                        except ValueError:
+                            pass
+                    if not wait_time and res.text:
+                        m = re.search(r"try again in ([\d\.]+)s", res.text)
+                        if m:
+                            wait_time = float(m.group(1))
+
+                    if not wait_time:
+                        wait_time = 20 * (retry_i + 1)  # 20s, 40s, 60s backoff
+                    else:
+                        wait_time += 1.0
+
+                    print(f"[llm_meta] Groq 429 rate limit hit. Waiting {wait_time:.1f}s (retry {retry_i+1}/3)...", flush=True)
+                    time.sleep(wait_time)
+                elif res.status_code in (500, 503):
                     time.sleep(4 * (retry_i + 1))
                 else:
                     break
             except Exception as e:
                 print(f"[warning] Groq request error: {e}", flush=True)
                 time.sleep(2)
+
+        # Fall back to smaller runtime text model if vision model is still rate-limited
+        if rate_limited and (res is None or res.status_code != 200):
+            fallback_text_model = get_best_groq_text_model(api_key)
+            print(f"[llm_meta] Vision model still rate-limited after retries. Falling back to runtime text model '{fallback_text_model}'...", flush=True)
+            video_name = os.path.splitext(os.path.basename(video_path))[0]
+            video_hint = re.sub(r"[_\-]+", " ", video_name).strip()
+            text_prompt = f"""Analyze this video concept for an engaging short-form video.
+Video title hint: "{video_hint}"
+Duration: {duration_seconds} seconds.
+
+Return ONLY a raw JSON object. No markdown, no code fences, no explanation text before or after.
+
+Perform this exact analysis:
+1. Inferred channel topic/niche from the title and context.
+2. The language of the video ('en').
+3. Relevant YouTube category ID (e.g. '22' for People & Blogs, '24' for Entertainment, '15' for Pets & Animals).
+4. Engaging SEO Title: Under 60 characters with the primary keyword right at the beginning. NEVER include money amounts, currency signs ($ € £ etc.), or fake statistics.
+5. Description: First 2 lines must be an intriguing hook, followed by a brief summary.
+6. 10 to 15 relevant SEO tags (comma joined length under 460 chars).
+7. Exactly 3 relevant hashtags ({"include #shorts" if duration_seconds <= 60 else "exclude #shorts"}).
+
+Required JSON structure:
+{{
+  "inferred_topic": "topic summary",
+  "language": "en",
+  "category_id": "22",
+  "title": "Keyword First: Engaging Short Title",
+  "description": "Hook line 1\nHook line 2\nDetailed description...",
+  "tags": ["tag1", "tag2", "tag3", "tag4", "tag5", "tag6", "tag7", "tag8", "tag9", "tag10"],
+  "hashtags": ["#tag1", "#tag2", "#tag3"]
+}}"""
+            text_payload = {
+                "model": fallback_text_model,
+                "messages": [{"role": "user", "content": text_prompt}],
+                "temperature": 0.2,
+                "max_tokens": 1000,
+                "response_format": {"type": "json_object"}
+            }
+            for text_retry_i in range(3):
+                try:
+                    res = requests.post(url, headers=headers, json=text_payload, timeout=30)
+                    if res.status_code == 200:
+                        current_model_used = fallback_text_model
+                        break
+                    elif res.status_code == 429:
+                        w_time = 20 * (text_retry_i + 1)
+                        print(f"[llm_meta] Groq text model 429. Waiting {w_time}s (retry {text_retry_i+1}/3)...", flush=True)
+                        time.sleep(w_time)
+                    else:
+                        break
+                except Exception as te:
+                    print(f"[warning] Groq text model request error: {te}", flush=True)
+                    time.sleep(2)
 
         if res is None or res.status_code != 200:
             err_msg = res.text[:200] if res is not None else "No response"
@@ -384,7 +500,7 @@ Required JSON structure:
 
             validate_metadata(meta)
             meta["path"] = "video_ai_groq"
-            meta["model_used"] = selected_model
+            meta["model_used"] = current_model_used
             final_meta = meta
             break
         except Exception as val_err:
